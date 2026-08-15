@@ -1,0 +1,320 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Backend de fefoto: catálogo de obras, opciones de personalización, pedidos y
+  analítica propia. API Gateway HTTP API + Lambda + DynamoDB + S3 + CloudFront.
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Timeout: 15
+    MemorySize: 512
+    Architectures: [arm64]
+
+Parameters:
+  AllowedOrigins:
+    Type: String
+    Default: "https://fefoto.cl,https://www.fefoto.cl,http://localhost:5177,http://localhost:4173"
+    Description: >
+      Orígenes permitidos para CORS (separados por coma). El 5177 es el puerto
+      fijo de Vite en desarrollo (ver vite.config.ts): si se cambia allá, hay
+      que cambiarlo acá o el panel deja de poder llamar a la API en local.
+  FirebaseProjectId:
+    Type: String
+    Default: fefoto
+    Description: >
+      Project ID de Firebase (issuer/audience del JWT de Google login). Tiene
+      que ser exactamente el mismo que está en src/admin/firebase.ts: si se
+      cambia en un lado y no en el otro, el panel entero responde 401.
+  CorreoRemitente:
+    Type: String
+    Default: hola@fefoto.cl
+    Description: >
+      Dirección verificada en SES desde la que salen las confirmaciones. Hasta
+      que el dominio esté verificado, los correos fallan en silencio y el
+      pedido se guarda igual.
+
+Resources:
+  # ─────────────── Tablas ───────────────
+
+  # Catálogo: obras, opciones de personalización y configuración de la tienda.
+  # Todo en una tabla porque siempre se lee junto —el sitio pide el catálogo
+  # completo de una vez— y son unos pocos cientos de filas.
+  #   tipo = foto   · id = fotoId
+  #   tipo = opcion · id = grupo#opcionId   (papel#algodon, marco#premium…)
+  #   tipo = config · id = tienda | regiones | contador
+  CatalogoTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: fefoto-catalogo
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: tipo
+          AttributeType: S
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tipo
+          KeyType: HASH
+        - AttributeName: id
+          KeyType: RANGE
+
+  # Pedidos. La clave es el id (un uuid), que es también la llave con que quien
+  # compró abre su pedido sin tener cuenta. Los dos índices responden las dos
+  # preguntas que se hacen de verdad: "los del mes" (panel) y "los míos"
+  # (cliente).
+  PedidosTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: fefoto-pedidos
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pedidoId
+          AttributeType: S
+        - AttributeName: mes # YYYY-MM
+          AttributeType: S
+        - AttributeName: creado # ISO 8601
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pedidoId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: porMes
+          KeySchema:
+            - AttributeName: mes
+              KeyType: HASH
+            - AttributeName: creado
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: porEmail
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+            - AttributeName: creado
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  # Usuarios del panel con su rol (admin | staff)
+  UsuariosTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: fefoto-usuarios
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+
+  # Analítica propia del sitio: una fila por visita, agrupada por día. El TTL
+  # evita que las filas crudas crezcan para siempre; el resumen solo mira el
+  # último mes.
+  AnaliticaTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: fefoto-analitica
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: dia # YYYY-MM-DD
+          AttributeType: S
+        - AttributeName: sk # HHMMSS#sufijo, para que cada visita sea única
+          AttributeType: S
+      KeySchema:
+        - AttributeName: dia
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # ─────────────── Imágenes ───────────────
+
+  # Un bucket con dos zonas y permisos opuestos:
+  #   web/      público y cacheado por CloudFront (versión reducida con marca)
+  #   original/ privado, nunca sale (el archivo del que se imprime)
+  ObrasBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "fefoto-obras-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        # Estos dos van en false porque la política de abajo publica web/*.
+        # Los ACL siguen bloqueados: lo público lo decide la política, no quien
+        # sube el archivo.
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins: !Split [",", !Ref AllowedOrigins]
+            AllowedMethods: [GET, PUT, HEAD]
+            AllowedHeaders: ["*"]
+            MaxAge: 3000
+
+  ObrasBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ObrasBucket
+      PolicyDocument:
+        Statement:
+          - Sid: LecturaPublicaSoloWeb
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${ObrasBucket}/web/*"
+
+  # CloudFront delante de las imágenes: la galería carga muchas fotos grandes y
+  # servirlas desde el borde, cacheadas, es la diferencia entre una sala que
+  # abre de golpe y una que aparece de a poco.
+  ObrasCdn:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: Imágenes públicas de fefoto
+        DefaultCacheBehavior:
+          TargetOriginId: obras
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          Compress: true
+          # CachingOptimized, la política administrada de AWS.
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        Origins:
+          - Id: obras
+            DomainName: !Sub "${ObrasBucket}.s3.${AWS::Region}.amazonaws.com"
+            S3OriginConfig: {}
+        PriceClass: PriceClass_100
+        HttpVersion: http2
+
+  # ─────────────── API ───────────────
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: $default
+      # API Gateway responde los preflight OPTIONS antes del authorizer; sin
+      # esto, las rutas /admin (JWT) rechazan el preflight sin cabeceras CORS.
+      CorsConfiguration:
+        AllowOrigins: !Split [",", !Ref AllowedOrigins]
+        AllowHeaders:
+          - content-type
+          - authorization
+        AllowMethods: [GET, POST, PUT, DELETE, OPTIONS]
+        MaxAge: 600
+      Auth:
+        Authorizers:
+          FirebaseAuth:
+            IdentitySource: "$request.header.Authorization"
+            JwtConfiguration:
+              issuer: !Sub "https://securetoken.google.com/${FirebaseProjectId}"
+              audience:
+                - !Ref FirebaseProjectId
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: fefoto-api
+      CodeUri: src/
+      Handler: index.handler
+      Environment:
+        Variables:
+          TABLA_CATALOGO: !Ref CatalogoTable
+          TABLA_PEDIDOS: !Ref PedidosTable
+          TABLA_USUARIOS: !Ref UsuariosTable
+          TABLA_ANALITICA: !Ref AnaliticaTable
+          BUCKET_OBRAS: !Ref ObrasBucket
+          CDN_OBRAS: !GetAtt ObrasCdn.DomainName
+          ORIGENES_PERMITIDOS: !Ref AllowedOrigins
+          CORREO_REMITENTE: !Ref CorreoRemitente
+          SITIO: "https://fefoto.cl"
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CatalogoTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PedidosTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsuariosTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AnaliticaTable
+        - S3CrudPolicy:
+            BucketName: !Sub "fefoto-obras-${AWS::AccountId}"
+        # Solo enviar, y solo desde esa dirección: si algo se desmadra, no
+        # puede mandar correo en nombre de otra identidad de la cuenta.
+        - Statement:
+            - Effect: Allow
+              Action: ses:SendEmail
+              Resource:
+                - !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*"
+                # La identidad tiene un configuration set por defecto; enviar
+                # exige permiso sobre él además de sobre la identidad.
+                - !Sub "arn:aws:ses:${AWS::Region}:${AWS::AccountId}:configuration-set/*"
+              Condition:
+                StringEquals:
+                  ses:FromAddress: !Ref CorreoRemitente
+      Events:
+        Publica:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /{proxy+}
+            Method: ANY
+        # Métodos explícitos (sin OPTIONS): el preflight CORS no debe pasar por
+        # el authorizer; API Gateway lo responde automáticamente.
+        #
+        # /mi/ es la zona del cliente: mismo autorizador que /admin/, pero sin
+        # exigir estar en la tabla de staff. De qué es "lo suyo" decide el
+        # correo verificado del token, nunca la petición.
+        MiGet:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /mi/{proxy+}
+            Method: GET
+            Auth:
+              Authorizer: FirebaseAuth
+        AdminGet:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /admin/{proxy+}
+            Method: GET
+            Auth:
+              Authorizer: FirebaseAuth
+        AdminPost:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /admin/{proxy+}
+            Method: POST
+            Auth:
+              Authorizer: FirebaseAuth
+        AdminPut:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /admin/{proxy+}
+            Method: PUT
+            Auth:
+              Authorizer: FirebaseAuth
+        AdminDelete:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /admin/{proxy+}
+            Method: DELETE
+            Auth:
+              Authorizer: FirebaseAuth
+
+Outputs:
+  ApiUrl:
+    Description: URL base de la API de fefoto (va en src/data/api.ts y src/admin/adminApi.ts)
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+  CdnObras:
+    Description: Dominio de CloudFront desde el que se sirven las imágenes
+    Value: !GetAtt ObrasCdn.DomainName
