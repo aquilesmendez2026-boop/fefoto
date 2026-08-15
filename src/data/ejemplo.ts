@@ -6,9 +6,18 @@
 // valores de acá son un punto de partida razonable, no una decisión cerrada.
 //
 // PENDIENTE DE LA CLIENTA: las cuatro listas, los precios y las fotos reales.
-import type { Foto, Opcion, Region, Tienda } from "./catalogo";
+import type { Categoria, Foto, Opcion, Region, Tienda } from "./catalogo";
 
-export const CATEGORIAS = ["Abstracta", "Música", "Naturaleza", "Sombra"];
+/**
+ * Las categorías con las que abre el catálogo. El orden es el que manda en la
+ * galería: se edita desde el panel, no se deduce del alfabeto ni de las obras.
+ */
+export const CATEGORIAS: Categoria[] = [
+  { nombre: "Abstracta", orden: 1 },
+  { nombre: "Música", orden: 2 },
+  { nombre: "Naturaleza", orden: 3 },
+  { nombre: "Sombra", orden: 4 },
+];
 
 export const OPCIONES: Opcion[] = [
   // ── Papel ──

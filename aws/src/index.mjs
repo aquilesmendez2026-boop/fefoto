@@ -173,15 +173,17 @@ const sinOriginal = ({ original, ...resto }) => resto;
 
 /** El catálogo completo, que es lo que pide el sitio de una sola vez. */
 async function catalogoPublico() {
-  const [fotos, opciones, regiones, tienda] = await Promise.all([
+  const [fotos, opciones, categorias, regiones, tienda] = await Promise.all([
     leerTipo("foto"),
     leerTipo("opcion"),
+    leerConfig("categorias", []),
     leerConfig("regiones", []),
     leerConfig("tienda", TIENDA_VACIA),
   ]);
   return json(200, {
     fotos: fotos.filter((f) => f.activa !== false).map(sinOriginal),
     opciones: opciones.filter((o) => o.activa !== false),
+    categorias: (categorias || []).filter((c) => c.activa !== false),
     regiones: (regiones || []).filter((r) => r.activa !== false),
     tienda,
   });
@@ -530,6 +532,65 @@ async function adminGuardarTienda(body) {
   };
   await guardarConfig("tienda", tienda);
   return json(200, { ok: true });
+}
+
+/**
+ * Guarda la lista de categorías y arrastra los renombres.
+ *
+ * Las obras guardan el nombre de la categoría, no un id, así que renombrar
+ * "Naturaleza" a "Paisaje" dejaría a todas sus obras apuntando a una categoría
+ * que ya no existe: seguirían visibles, pero fuera del filtro. El panel manda
+ * qué se renombró y acá se reescriben las obras afectadas, en el mismo guardado.
+ *
+ * Se recorren todas las obras y se toca solo las que cambian. Es un catálogo de
+ * cientos de filas y renombrar es raro: no compensa mantener un índice para
+ * esto.
+ */
+async function adminGuardarCategorias(body) {
+  const categorias = (Array.isArray(body?.categorias) ? body.categorias : [])
+    .slice(0, 60)
+    .map((c, i) => ({
+      nombre: recorta(c?.nombre, 40),
+      orden: entero(c?.orden, 0, 9999, i + 1),
+      activa: c?.activa !== false,
+    }))
+    .filter((c) => c.nombre);
+
+  // Nombres repetidos harían aparecer el mismo filtro dos veces en la galería.
+  const vistos = new Set();
+  const limpias = categorias.filter((c) => {
+    const clave = c.nombre.toLowerCase();
+    if (vistos.has(clave)) return false;
+    vistos.add(clave);
+    return true;
+  });
+
+  const renombres = (Array.isArray(body?.renombres) ? body.renombres : [])
+    .slice(0, 60)
+    .map((r) => ({ de: recorta(r?.de, 40), a: recorta(r?.a, 40) }))
+    .filter((r) => r.de && r.a && r.de !== r.a);
+
+  let obrasTocadas = 0;
+  if (renombres.length) {
+    const fotos = await leerTipo("foto");
+    for (const foto of fotos) {
+      const antes = foto.categorias || [];
+      const despues = antes.map((n) => renombres.find((r) => r.de === n)?.a ?? n);
+      if (despues.join("|") === antes.join("|")) continue;
+      await db.send(
+        new UpdateItemCommand({
+          TableName: T.catalogo,
+          Key: marshall({ tipo: "foto", id: foto.id }),
+          UpdateExpression: "SET categorias = :c",
+          ExpressionAttributeValues: marshall({ ":c": despues }),
+        })
+      );
+      obrasTocadas++;
+    }
+  }
+
+  await guardarConfig("categorias", limpias);
+  return json(200, { ok: true, obrasTocadas });
 }
 
 async function adminGuardarRegiones(body) {
@@ -1025,6 +1086,11 @@ export const handler = async (event) => {
         return conCors(json(200, { ok: true, tienda: await leerConfig("tienda", TIENDA_VACIA) }));
       if (method === "PUT" && path === "/admin/tienda")
         return conCors(await adminGuardarTienda(body));
+
+      if (method === "GET" && path === "/admin/categorias")
+        return conCors(json(200, { ok: true, categorias: await leerConfig("categorias", []) }));
+      if (method === "PUT" && path === "/admin/categorias")
+        return conCors(await adminGuardarCategorias(body));
 
       if (method === "GET" && path === "/admin/regiones")
         return conCors(json(200, { ok: true, regiones: await leerConfig("regiones", []) }));

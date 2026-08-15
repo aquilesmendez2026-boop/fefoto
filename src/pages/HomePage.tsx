@@ -10,7 +10,7 @@ import { ContactoSection } from "../organisms/ContactoSection";
 import { Footer } from "../organisms/Footer";
 
 export const HomePage = () => {
-  const { fotos, opciones, tienda, demo } = useCatalogo();
+  const { fotos, opciones, categorias, tienda, demo } = useCatalogo();
 
   useEffect(() => {
     registrarVisita("home");
@@ -43,7 +43,7 @@ export const HomePage = () => {
         </Text>
       )}
 
-      <GaleriaSection fotos={publicadas} opciones={opciones} />
+      <GaleriaSection fotos={publicadas} opciones={opciones} categorias={categorias} />
       <ComoFuncionaSection tienda={tienda} />
       <ContactoSection tienda={tienda} />
       <Footer />

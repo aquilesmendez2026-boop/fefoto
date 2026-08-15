@@ -64,6 +64,22 @@ export interface Opcion {
   acabado?: "brillante" | "satinado" | "mate" | "texturado";
 }
 
+/**
+ * Una categoría del catálogo: abstracta, música, naturaleza, sombra…
+ *
+ * Se guarda por nombre y no por un id interno, y las obras lo referencian así.
+ * Es lo que hace que la fila de una obra se lea sola —dice "Naturaleza", no
+ * "cat-3"— y que la galería no necesite resolver nada para dibujarse. El riesgo
+ * de ese enfoque, que renombrar deje obras apuntando a un nombre que ya no
+ * existe, lo cubre el backend: al renombrar desde el panel, reescribe las obras
+ * afectadas (ver adminGuardarCategorias en aws/src/index.mjs).
+ */
+export interface Categoria {
+  nombre: string;
+  orden?: number;
+  activa?: boolean;
+}
+
 /** Tirada numerada de una obra. Ausente = copias sin límite. */
 export interface Edicion {
   total: number;

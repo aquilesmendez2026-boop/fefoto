@@ -2,7 +2,7 @@
 // La autenticación es con Google (Firebase): se envía el ID token como Bearer.
 import { auth } from "./firebase";
 import { API } from "../data/apiBase";
-import type { Foto, Opcion, Region, Tienda } from "../data/catalogo";
+import type { Categoria, Foto, Opcion, Region, Tienda } from "../data/catalogo";
 import type { Estado, Pedido } from "../data/pedido";
 
 export type { Bloque, Celda } from "../molecules/ArticuloRender";
@@ -114,6 +114,27 @@ export const borrarOpcion = (grupo: string, id: string) =>
     `/admin/opciones/${encodeURIComponent(grupo)}/${encodeURIComponent(id)}`,
     { method: "DELETE" }
   );
+
+// ───────── Categorías ─────────
+
+export const listarCategorias = () =>
+  req<{ categorias: Categoria[] }>("/admin/categorias").then((r) => r.categorias ?? []);
+
+/**
+ * Guarda la lista completa, como las regiones: se edita como una sola cosa.
+ *
+ * `renombres` viaja aparte porque el backend no puede adivinarlo comparando
+ * listas —renombrar una y borrar otra se ven igual— y de eso depende que las
+ * obras de una categoría renombrada la sigan encontrando.
+ */
+export const guardarCategorias = (
+  categorias: Categoria[],
+  renombres: { de: string; a: string }[] = []
+) =>
+  req<{ ok: boolean; obrasTocadas: number }>("/admin/categorias", {
+    method: "PUT",
+    body: JSON.stringify({ categorias, renombres }),
+  });
 
 // ───────── Tienda y despacho ─────────
 

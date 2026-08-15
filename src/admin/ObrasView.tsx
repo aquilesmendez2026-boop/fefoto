@@ -11,12 +11,13 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
-import { Eye, EyeOff, ImagePlus, Pencil, Plus, Star, Trash2, Upload } from "lucide-react";
-import { borrarFoto, guardarFoto, listarFotos } from "./adminApi";
+import { Eye, EyeOff, ImagePlus, Pencil, Plus, Star, Tags, Trash2, Upload } from "lucide-react";
+import { borrarFoto, guardarFoto, listarCategorias, listarFotos } from "./adminApi";
 import { subirObra } from "./imagen";
-import { clp, type Foto } from "../data/catalogo";
+import { clp, type Categoria, type Foto } from "../data/catalogo";
 import type { Bloque } from "../molecules/ArticuloRender";
 import { EditorArticulo } from "./EditorArticulo";
+import { CategoriasEditor } from "./CategoriasEditor";
 import { Card } from "../atoms/Card";
 import { Etiqueta, campo } from "./comunes";
 
@@ -49,6 +50,8 @@ const vacia = (): Foto => ({
  */
 export function ObrasView({ notificar }: { notificar: (t: string) => void }) {
   const [fotos, setFotos] = useState<Foto[] | null | undefined>(undefined);
+  const [categorias, setCategorias] = useState<Categoria[]>([]);
+  const [verCategorias, setVerCategorias] = useState(false);
   const [editando, setEditando] = useState<Foto | null>(null);
   const [subiendo, setSubiendo] = useState(false);
   const [guardando, setGuardando] = useState(false);
@@ -59,6 +62,11 @@ export function ObrasView({ notificar }: { notificar: (t: string) => void }) {
     listarFotos()
       .then((f) => setFotos(f.sort((a, b) => (a.orden ?? 999) - (b.orden ?? 999))))
       .catch(() => setFotos(null));
+    // Las categorías se piden aparte y sin bloquear la lista: si fallan, se
+    // pueden editar las obras igual, solo que sin sugerencias.
+    listarCategorias()
+      .then((c) => setCategorias(c.sort((a, b) => (a.orden ?? 999) - (b.orden ?? 999))))
+      .catch(() => setCategorias([]));
   }, []);
 
   useEffect(cargar, [cargar]);
@@ -216,19 +224,11 @@ export function ObrasView({ notificar }: { notificar: (t: string) => void }) {
             </Box>
 
             <Box>
-              <Etiqueta>Categorías (separadas por coma)</Etiqueta>
-              <Input
-                value={editando.categorias.join(", ")}
-                placeholder="Sombra, Abstracta"
-                onChange={(e) =>
-                  set({
-                    categorias: e.target.value
-                      .split(",")
-                      .map((c) => c.trim())
-                      .filter(Boolean),
-                  })
-                }
-                {...campo}
+              <Etiqueta>Categorías</Etiqueta>
+              <SelectorCategorias
+                categorias={categorias}
+                elegidas={editando.categorias}
+                onCambio={(categorias) => set({ categorias })}
               />
             </Box>
 
@@ -312,22 +312,55 @@ export function ObrasView({ notificar }: { notificar: (t: string) => void }) {
     <VStack align="stretch" gap="5">
       <HStack justify="space-between">
         <Text fontSize="sm" color="fg.subtle">
-          {fotos?.length ?? 0} obras en el catálogo
+          {fotos?.length ?? 0} obras · {categorias.length} categorías
         </Text>
-        <Button
-          size="sm"
-          px="4"
-          borderRadius="md"
-          bg="brand.primary"
-          color="fg.inverted"
-          fontWeight="600"
-          _hover={{ bg: "brass.200" }}
-          onClick={() => setEditando(vacia())}
-        >
-          <Plus size={15} style={{ marginRight: 6 }} />
-          Nueva obra
-        </Button>
+        <HStack gap="2">
+          <Button
+            size="sm"
+            px="4"
+            borderRadius="md"
+            variant="outline"
+            borderColor={verCategorias ? "border.brand" : "border.subtle"}
+            color={verCategorias ? "brand.primary" : "fg.muted"}
+            fontWeight="500"
+            _hover={{ borderColor: "border.brand", color: "brand.primary" }}
+            onClick={() => setVerCategorias((v) => !v)}
+          >
+            <Tags size={15} style={{ marginRight: 6 }} />
+            Categorías
+          </Button>
+          <Button
+            size="sm"
+            px="4"
+            borderRadius="md"
+            bg="brand.primary"
+            color="fg.inverted"
+            fontWeight="600"
+            _hover={{ bg: "brass.200" }}
+            onClick={() => setEditando(vacia())}
+          >
+            <Plus size={15} style={{ marginRight: 6 }} />
+            Nueva obra
+          </Button>
+        </HStack>
       </HStack>
+
+      {verCategorias && (
+        <Card p="6">
+          <CategoriasEditor
+            categorias={categorias}
+            enUso={conteoPorCategoria(fotos ?? [])}
+            onGuardado={(c) => {
+              setCategorias(c);
+              // Las obras pueden haber cambiado de nombre de categoría en el
+              // mismo guardado, así que se releen: si no, la lista seguiría
+              // mostrando el nombre viejo hasta recargar el panel.
+              cargar();
+            }}
+            notificar={notificar}
+          />
+        </Card>
+      )}
 
       {fotos === undefined ? (
         <Flex py="10" justify="center">
@@ -391,6 +424,83 @@ export function ObrasView({ notificar }: { notificar: (t: string) => void }) {
             </Card>
           ))}
         </Grid>
+      )}
+    </VStack>
+  );
+}
+
+/** Cuántas obras usa cada categoría. Lo necesita el editor para avisar al borrar. */
+function conteoPorCategoria(fotos: Foto[]): Record<string, number> {
+  const cuenta: Record<string, number> = {};
+  for (const f of fotos) for (const c of f.categorias || []) cuenta[c] = (cuenta[c] ?? 0) + 1;
+  return cuenta;
+}
+
+/**
+ * Elegir las categorías de una obra, marcando de una lista.
+ *
+ * Antes se escribían separadas por comas, y bastaba un "Naturalez" o un
+ * "musica" en minúscula para abrir una categoría fantasma en la galería, con
+ * una sola obra dentro y sin forma de notarlo.
+ *
+ * Los nombres que la obra trae y ya no están en la lista se muestran igual,
+ * marcados aparte: son de categorías borradas o escritas a mano antes, y
+ * esconderlos los borraría en silencio al primer guardado.
+ */
+function SelectorCategorias({
+  categorias,
+  elegidas,
+  onCambio,
+}: {
+  categorias: Categoria[];
+  elegidas: string[];
+  onCambio: (c: string[]) => void;
+}) {
+  const alternar = (nombre: string) =>
+    onCambio(
+      elegidas.includes(nombre) ? elegidas.filter((c) => c !== nombre) : [...elegidas, nombre]
+    );
+
+  const sueltas = elegidas.filter((n) => !categorias.some((c) => c.nombre === n));
+
+  if (categorias.length === 0 && sueltas.length === 0)
+    return (
+      <Text fontSize="sm" color="fg.subtle" lineHeight="tall">
+        Todavía no hay categorías. Créalas con el botón <strong>Categorías</strong>, arriba, y
+        vuelve a esta obra para marcarlas.
+      </Text>
+    );
+
+  const chip = (nombre: string, activa: boolean, huerfana = false) => (
+    <Button
+      key={nombre}
+      size="xs"
+      px="3.5"
+      borderRadius="full"
+      fontWeight="500"
+      border="1px solid"
+      borderColor={activa ? "border.brand" : "border.subtle"}
+      bg={activa ? "rgba(210,185,132,0.10)" : "transparent"}
+      color={activa ? "brand.primary" : "fg.muted"}
+      fontStyle={huerfana ? "italic" : undefined}
+      _hover={{ borderColor: "border.brand" }}
+      onClick={() => alternar(nombre)}
+      title={huerfana ? "No está en la lista de categorías" : undefined}
+    >
+      {nombre}
+    </Button>
+  );
+
+  return (
+    <VStack align="stretch" gap="2">
+      <HStack gap="1.5" flexWrap="wrap">
+        {categorias.map((c) => chip(c.nombre, elegidas.includes(c.nombre)))}
+        {sueltas.map((n) => chip(n, true, true))}
+      </HStack>
+      {sueltas.length > 0 && (
+        <Text fontSize="xs" color="fg.subtle">
+          En cursiva, categorías que esta obra usa y no están en la lista.
+        </Text>
       )}
     </VStack>
   );

@@ -3,8 +3,8 @@ import { Box, HStack, Text, chakra } from "@chakra-ui/react";
 import { Section } from "../atoms/Section";
 import { SectionTitle } from "../atoms/SectionTitle";
 import { ObraCard } from "../molecules/ObraCard";
-import { categoriasDe } from "../data/useCatalogo";
-import type { Foto, Opcion } from "../data/catalogo";
+import { categoriasVisibles } from "../data/useCatalogo";
+import type { Categoria, Foto, Opcion } from "../data/catalogo";
 
 const TODAS = "Todas";
 
@@ -16,9 +16,17 @@ const TODAS = "Todas";
  * todas a la misma proporción: recortar la obra de otra persona para que calce
  * en una cuadrícula es exactamente lo que no se puede hacer acá.
  */
-export const GaleriaSection = ({ fotos, opciones }: { fotos: Foto[]; opciones: Opcion[] }) => {
+export const GaleriaSection = ({
+  fotos,
+  opciones,
+  categorias,
+}: {
+  fotos: Foto[];
+  opciones: Opcion[];
+  categorias: Categoria[];
+}) => {
   const [filtro, setFiltro] = useState(TODAS);
-  const categorias = useMemo(() => [TODAS, ...categoriasDe(fotos)], [fotos]);
+  const filtros = useMemo(() => [TODAS, ...categoriasVisibles(fotos, categorias)], [fotos, categorias]);
   const visibles = useMemo(
     () => (filtro === TODAS ? fotos : fotos.filter((f) => f.categorias?.includes(filtro))),
     [fotos, filtro]
@@ -32,9 +40,9 @@ export const GaleriaSection = ({ fotos, opciones }: { fotos: Foto[]; opciones: O
         subtitle="Cada obra se imprime a pedido. Elige la copia y decide después el papel, el tamaño, el marco y el vidrio."
       />
 
-      {categorias.length > 2 && (
+      {filtros.length > 2 && (
         <HStack gap="1" flexWrap="wrap" mt="8" mb="10">
-          {categorias.map((c) => (
+          {filtros.map((c) => (
             <chakra.button
               key={c}
               type="button"

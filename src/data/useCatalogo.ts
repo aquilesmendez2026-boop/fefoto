@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { cargarCatalogo, type Catalogo } from "./api";
-import { FOTOS, OPCIONES, REGIONES, TIENDA } from "./ejemplo";
-import type { Foto } from "./catalogo";
+import { CATEGORIAS, FOTOS, OPCIONES, REGIONES, TIENDA } from "./ejemplo";
+import type { Categoria, Foto } from "./catalogo";
 
 /**
  * El catálogo para las pantallas del sitio.
@@ -34,6 +34,7 @@ export function useCatalogo() {
     cargando,
     fotos: datos?.fotos?.length ? datos.fotos : FOTOS,
     opciones: datos?.opciones?.length ? datos.opciones : OPCIONES,
+    categorias: datos?.categorias?.length ? datos.categorias : CATEGORIAS,
     regiones: datos?.regiones?.length ? datos.regiones : REGIONES,
     tienda: { ...TIENDA, ...(datos?.tienda ?? {}) },
     /** true cuando lo que se ve son las obras de muestra, no las reales. */
@@ -41,12 +42,27 @@ export function useCatalogo() {
   };
 }
 
-/** Las categorías que existen de verdad, en el orden en que aparecen. */
-export function categoriasDe(fotos: Foto[]): string[] {
-  const vistas: string[] = [];
-  for (const f of fotos)
-    for (const c of f.categorias || []) if (c && !vistas.includes(c)) vistas.push(c);
-  return vistas.sort((a, b) => a.localeCompare(b, "es"));
+/**
+ * Las categorías que se ofrecen como filtro en la galería.
+ *
+ * Manda el orden del panel, no el alfabeto: la clienta decide con qué se abre
+ * su sala. Solo aparecen las que tienen obras publicadas —un filtro que no
+ * lleva a nada es una puerta cerrada— y al final se suman los nombres sueltos
+ * que hayan quedado en alguna obra sin estar en la lista, para que ninguna obra
+ * quede inalcanzable mientras se ordena el catálogo.
+ */
+export function categoriasVisibles(fotos: Foto[], categorias: Categoria[]): string[] {
+  const usadas = new Set(fotos.flatMap((f) => f.categorias || []));
+  const ordenadas = [...categorias]
+    .filter((c) => c.activa !== false && usadas.has(c.nombre))
+    .sort((a, b) => (a.orden ?? 999) - (b.orden ?? 999))
+    .map((c) => c.nombre);
+
+  const huerfanas = [...usadas]
+    .filter((n) => n && !categorias.some((c) => c.nombre === n))
+    .sort((a, b) => a.localeCompare(b, "es"));
+
+  return [...ordenadas, ...huerfanas];
 }
 
 /** Solo lo publicado, en el orden del panel. */

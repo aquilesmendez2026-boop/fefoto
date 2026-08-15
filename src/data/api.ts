@@ -1,6 +1,6 @@
 // Cliente de la API pública de fefoto (AWS: API Gateway + Lambda + DynamoDB).
 import { API } from "./apiBase";
-import type { Foto, Opcion, Region, Tienda } from "./catalogo";
+import type { Categoria, Foto, Opcion, Region, Tienda } from "./catalogo";
 import type { Cliente, Entrega, Pedido } from "./pedido";
 
 async function get<T>(path: string): Promise<T> {
@@ -14,6 +14,7 @@ async function get<T>(path: string): Promise<T> {
 export interface Catalogo {
   fotos: Foto[];
   opciones: Opcion[];
+  categorias: Categoria[];
   regiones: Region[];
   tienda: Tienda;
 }
