@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Box, Flex, HStack, Link, Spinner, Text, VStack } from "@chakra-ui/react";
 import type { User } from "firebase/auth";
-import { misPedidos, observarSesion } from "../data/cuenta";
+import { miRol, misPedidos, observarSesion } from "../data/cuenta";
 import { registrarVisita } from "../data/api";
 import { clp } from "../data/catalogo";
 import { estadoDe, type Pedido } from "../data/pedido";
@@ -34,10 +34,27 @@ export const CuentaPage = () => {
     return observarSesion((u) => {
       setUser(u);
       setCargandoSesion(false);
-      // La marca ligera es la que lee el chip del navbar. `s: false` dice que
-      // entró como cliente, para no ofrecerle los accesos del panel.
-      if (u) guardarSesion({ n: u.displayName || "", e: u.email || "", f: u.photoURL || "", s: false });
-      else olvidarSesion();
+      if (!u) {
+        olvidarSesion();
+        return;
+      }
+      // La marca ligera es la que lee el chip del navbar para decidir si
+      // ofrece los accesos al panel.
+      const marca = { n: u.displayName || "", e: u.email || "", f: u.photoURL || "" };
+      // Se guarda primero como cliente y recién se corrige si el backend
+      // confirma que es del equipo. Al revés se vería un parpadeo de enlaces
+      // al panel en la sesión de cualquier cliente, que es el error caro.
+      guardarSesion({ ...marca, s: false });
+      // Ser del equipo no depende de por dónde entraste: quien es staff y
+      // entra por su cuenta de cliente sigue siendo staff. La única fuente de
+      // verdad es la tabla de usuarios, así que se pregunta.
+      miRol()
+        .then((rol) => {
+          if (rol) guardarSesion({ ...marca, s: true });
+        })
+        .catch(() => {
+          /* sin respuesta: se queda como cliente, que es lo prudente */
+        });
     });
   }, []);
 
