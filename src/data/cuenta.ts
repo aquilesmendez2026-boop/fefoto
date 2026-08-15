@@ -4,9 +4,8 @@
 // necesita quien entra a ver sus pedidos, y no tiene por qué descargarlos quien
 // entró a mirar la galería. Se reusa la instancia del panel para no levantar dos.
 import type { User } from "firebase/auth";
+import { API } from "./apiBase";
 import type { Pedido } from "./pedido";
-
-const API = "https://c3164i3nmh.execute-api.us-east-2.amazonaws.com";
 
 const authDiferido = () => import("../admin/firebase").then((m) => m.auth);
 

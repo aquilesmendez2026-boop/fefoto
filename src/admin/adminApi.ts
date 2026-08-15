@@ -1,12 +1,11 @@
 // Cliente de los endpoints de administración.
 // La autenticación es con Google (Firebase): se envía el ID token como Bearer.
 import { auth } from "./firebase";
+import { API } from "../data/apiBase";
 import type { Foto, Opcion, Region, Tienda } from "../data/catalogo";
 import type { Estado, Pedido } from "../data/pedido";
 
 export type { Bloque, Celda } from "../molecules/ArticuloRender";
-
-const API = "https://c3164i3nmh.execute-api.us-east-2.amazonaws.com";
 
 async function token(forzarNuevo = false): Promise<string> {
   const u = auth.currentUser;

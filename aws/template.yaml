@@ -2,7 +2,8 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
   Backend de fefoto: catálogo de obras, opciones de personalización, pedidos y
-  analítica propia. API Gateway HTTP API + Lambda + DynamoDB + S3 + CloudFront.
+  analítica propia. API Gateway HTTP API + Lambda + DynamoDB + S3
+  (con CloudFront opcional delante de las imágenes).
 
 Globals:
   Function:
@@ -33,6 +34,19 @@ Parameters:
       Dirección verificada en SES desde la que salen las confirmaciones. Hasta
       que el dominio esté verificado, los correos fallan en silencio y el
       pedido se guarda igual.
+  UsarCdn:
+    Type: String
+    Default: "no"
+    AllowedValues: ["si", "no"]
+    Description: >
+      Si se pone CloudFront delante de las imágenes. Va en "no" porque el
+      usuario que despliega todavía no tiene permiso de cloudfront:*; con el
+      permiso concedido, basta redesplegar con UsarCdn=si y las imágenes pasan
+      a servirse desde el borde. Mientras tanto salen directo del bucket, que
+      funciona igual: solo carga más lento fuera de la región.
+
+Conditions:
+  ConCdn: !Equals [!Ref UsarCdn, "si"]
 
 Resources:
   # ─────────────── Tablas ───────────────
@@ -136,7 +150,7 @@ Resources:
   # ─────────────── Imágenes ───────────────
 
   # Un bucket con dos zonas y permisos opuestos:
-  #   web/      público y cacheado por CloudFront (versión reducida con marca)
+  #   web/      público (versión reducida con marca de agua)
   #   original/ privado, nunca sale (el archivo del que se imprime)
   ObrasBucket:
     Type: AWS::S3::Bucket
@@ -171,9 +185,10 @@ Resources:
 
   # CloudFront delante de las imágenes: la galería carga muchas fotos grandes y
   # servirlas desde el borde, cacheadas, es la diferencia entre una sala que
-  # abre de golpe y una que aparece de a poco.
+  # abre de golpe y una que aparece de a poco. Opcional (ver UsarCdn).
   ObrasCdn:
     Type: AWS::CloudFront::Distribution
+    Condition: ConCdn
     Properties:
       DistributionConfig:
         Enabled: true
@@ -229,7 +244,14 @@ Resources:
           TABLA_USUARIOS: !Ref UsuariosTable
           TABLA_ANALITICA: !Ref AnaliticaTable
           BUCKET_OBRAS: !Ref ObrasBucket
-          CDN_OBRAS: !GetAtt ObrasCdn.DomainName
+          # El dominio desde el que se publican las imágenes: CloudFront si
+          # está activo, y si no el propio bucket. La Lambda arma con esto la
+          # URL pública que se guarda en cada obra, así que cambiar de uno a
+          # otro no toca ninguna fila ya guardada.
+          CDN_OBRAS: !If
+            - ConCdn
+            - !GetAtt ObrasCdn.DomainName
+            - !Sub "${ObrasBucket}.s3.${AWS::Region}.amazonaws.com"
           ORIGENES_PERMITIDOS: !Ref AllowedOrigins
           CORREO_REMITENTE: !Ref CorreoRemitente
           SITIO: "https://fefoto.cl"
@@ -313,8 +335,11 @@ Resources:
 
 Outputs:
   ApiUrl:
-    Description: URL base de la API de fefoto (va en src/data/api.ts y src/admin/adminApi.ts)
+    Description: URL base de la API de fefoto (va en src/data/apiBase.ts)
     Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
   CdnObras:
-    Description: Dominio de CloudFront desde el que se sirven las imágenes
-    Value: !GetAtt ObrasCdn.DomainName
+    Description: Dominio desde el que se sirven las imágenes
+    Value: !If
+      - ConCdn
+      - !GetAtt ObrasCdn.DomainName
+      - !Sub "${ObrasBucket}.s3.${AWS::Region}.amazonaws.com"

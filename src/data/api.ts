@@ -1,8 +1,7 @@
 // Cliente de la API pública de fefoto (AWS: API Gateway + Lambda + DynamoDB).
+import { API } from "./apiBase";
 import type { Foto, Opcion, Region, Tienda } from "./catalogo";
 import type { Cliente, Entrega, Pedido } from "./pedido";
-
-const API = "https://c3164i3nmh.execute-api.us-east-2.amazonaws.com";
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${API}${path}`);
