@@ -15,11 +15,18 @@ Globals:
 Parameters:
   AllowedOrigins:
     Type: String
-    Default: "https://fefoto.cl,https://www.fefoto.cl,http://localhost:5177,http://localhost:4173"
+    Default: "https://fefoto.cl,https://www.fefoto.cl,https://main.d3aeq8m6fv7b0a.amplifyapp.com,http://localhost:5177,http://localhost:4173"
     Description: >
       Orígenes permitidos para CORS (separados por coma). El 5177 es el puerto
       fijo de Vite en desarrollo (ver vite.config.ts): si se cambia allá, hay
       que cambiarlo acá o el panel deja de poder llamar a la API en local.
+
+      El dominio de Amplify va escrito completo y no como comodín porque
+      API Gateway compara los orígenes uno a uno: acepta la lista exacta o
+      "*", nada intermedio. La Lambda sí reconoce cualquier *.amplifyapp.com
+      por su cuenta (ver esAmplify en src/index.mjs), pero el preflight de las
+      rutas /admin lo responde API Gateway antes de llegar a ella, así que sin
+      esta línea el panel alojado en Amplify no podría guardar nada.
   FirebaseProjectId:
     Type: String
     Default: fefoto
@@ -166,7 +173,10 @@ Resources:
         RestrictPublicBuckets: false
       CorsConfiguration:
         CorsRules:
-          - AllowedOrigins: !Split [",", !Ref AllowedOrigins]
+          # S3 sí admite comodín, así que acá se agregan de una todas las ramas
+          # y vistas previas de Amplify. Es el mismo criterio que usa la Lambda
+          # y evita tener que redesplegar cada vez que aparece una rama nueva.
+          - AllowedOrigins: !Split [",", !Sub "${AllowedOrigins},https://*.amplifyapp.com"]
             AllowedMethods: [GET, PUT, HEAD]
             AllowedHeaders: ["*"]
             MaxAge: 3000
