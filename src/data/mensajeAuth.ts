@@ -36,6 +36,12 @@ export function mensajeAuth(codigo: string): string {
       return "Esta cuenta está deshabilitada. Escríbenos y lo vemos.";
     case "auth/operation-not-allowed":
       return "El ingreso con correo y contraseña no está habilitado en Firebase. Un administrador debe activarlo en Authentication → Sign-in method.";
+    // No es que falte habilitar un método: es que Authentication nunca se
+    // activó en el proyecto, así que no hay ninguna configuración que leer.
+    // Sin este caso, el error salía como "no se pudo completar" y no había por
+    // dónde empezar a buscar.
+    case "auth/configuration-not-found":
+      return "Authentication no está activado en el proyecto de Firebase. Un administrador debe entrar a Authentication, pulsar Comenzar y habilitar el ingreso con Google.";
     default:
       return `No se pudo completar (${codigo || "error desconocido"}).`;
   }
