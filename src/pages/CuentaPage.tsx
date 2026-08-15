@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { Box, Flex, HStack, Link, Spinner, Text, VStack } from "@chakra-ui/react";
 import type { User } from "firebase/auth";
-import { miRol, misPedidos, observarSesion } from "../data/cuenta";
+import { misPedidos, observarSesion } from "../data/cuenta";
 import { registrarVisita } from "../data/api";
 import { clp } from "../data/catalogo";
 import { estadoDe, type Pedido } from "../data/pedido";
 import { Navbar } from "../organisms/Navbar";
 import { Footer } from "../organisms/Footer";
 import { AccesoCuenta } from "../organisms/AccesoCuenta";
-import { guardarSesion, olvidarSesion } from "../molecules/SesionButton";
+import { guardarSesion, leerSesion, olvidarSesion } from "../molecules/SesionButton";
 
 const fechaCorta = (iso: string) => {
   const d = new Date(iso);
@@ -38,23 +38,19 @@ export const CuentaPage = () => {
         olvidarSesion();
         return;
       }
-      // La marca ligera es la que lee el chip del navbar para decidir si
-      // ofrece los accesos al panel.
-      const marca = { n: u.displayName || "", e: u.email || "", f: u.photoURL || "" };
-      // Se guarda primero como cliente y recién se corrige si el backend
-      // confirma que es del equipo. Al revés se vería un parpadeo de enlaces
-      // al panel en la sesión de cualquier cliente, que es el error caro.
-      guardarSesion({ ...marca, s: false });
-      // Ser del equipo no depende de por dónde entraste: quien es staff y
-      // entra por su cuenta de cliente sigue siendo staff. La única fuente de
-      // verdad es la tabla de usuarios, así que se pregunta.
-      miRol()
-        .then((rol) => {
-          if (rol) guardarSesion({ ...marca, s: true });
-        })
-        .catch(() => {
-          /* sin respuesta: se queda como cliente, que es lo prudente */
-        });
+      // La marca ligera que lee el chip del navbar. Quién es del equipo lo
+      // averigua el propio chip contra el backend (ver SesionButton): acá solo
+      // se anotan los datos de la persona.
+      //
+      // El rol ya confirmado se conserva. Escribir `s: false` a secas degradaba
+      // a cliente a un admin que pasara por esta página, y el chip no vuelve a
+      // preguntar en la misma carga: se quedaba sin los accesos al panel.
+      guardarSesion({
+        n: u.displayName || "",
+        e: u.email || "",
+        f: u.photoURL || "",
+        s: leerSesion()?.s === true,
+      });
     });
   }, []);
 

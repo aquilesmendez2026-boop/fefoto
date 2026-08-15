@@ -79,6 +79,15 @@ const irA = (hash: string) => {
  * - Con sesión → chip con avatar y menú. Las opciones del panel salen solo si
  *   la sesión se abrió desde ahí.
  */
+/**
+ * Ya se preguntó el rol en esta carga de página.
+ *
+ * El chip se dibuja en todas las páginas, y sin esto cada visita a la portada
+ * volvería a preguntar. Vive fuera del componente porque la respuesta es la
+ * misma para todos: el rol lo tiene la persona, no el botón.
+ */
+let rolConsultado = false;
+
 export const SesionButton = () => {
   const [sesion, setSesion] = useState<Sesion | null>(leerSesion);
 
@@ -92,6 +101,37 @@ export const SesionButton = () => {
       window.removeEventListener("storage", alCambiar);
     };
   }, []);
+
+  /**
+   * Confirma con el backend si esta persona es del equipo.
+   *
+   * Acá y no en las páginas que abren sesión, porque la marca guardada dura
+   * entre visitas: quien entró alguna vez por su cuenta de cliente quedaba
+   * marcado como cliente para siempre, y el menú le escondía el panel aunque
+   * fuera admin. El chip está en todas las páginas, así que revisándolo acá se
+   * corrige sola en la primera pantalla que abra, sin volver a entrar.
+   *
+   * Solo se pregunta si ya hay sesión: un visitante anónimo no descarga
+   * Firebase ni gasta una petición. Y solo si la marca no está confirmada, así
+   * que a quien ya sabemos del equipo no se le vuelve a preguntar.
+   */
+  useEffect(() => {
+    if (!sesion || sesion.s === true || rolConsultado) return;
+    rolConsultado = true;
+    let vivo = true;
+    import("../data/cuenta")
+      .then((m) => m.miRol())
+      .then((rol) => {
+        if (vivo && rol) guardarSesion({ ...sesion, s: true });
+      })
+      .catch(() => {
+        // Sin respuesta se deja la marca como está: en la duda, cliente.
+        rolConsultado = false;
+      });
+    return () => {
+      vivo = false;
+    };
+  }, [sesion]);
 
   if (!sesion) {
     return (
